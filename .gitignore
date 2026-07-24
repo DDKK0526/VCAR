@@ -1,0 +1,26 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Local environments
+.venv/
+venv/
+env/
+.env
+
+# Third-party repositories installed from upstream
+sam3/
+gaussiansplatting/
+
+# Generated results and separately distributed datasets
+outputs/
+temp_frames/
+**/temp_frames/
+data/
+
+# Editor and OS files
+.DS_Store
+.vscode/
+.idea/
+.codex
