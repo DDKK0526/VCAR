@@ -31,6 +31,13 @@ from seg_utils.general_utils import (
     get_combined_args, call_sam_video_segment, load_masks_from_folder,
     render_segmented_results, save_gs, save_background_gs
 )
+from seg_utils.frame_mapping import (
+    LATEST_FRAME_MAPPING_FILENAME,
+    build_frame_camera_mapping,
+    collect_mapped_train_masks,
+    load_frame_camera_mapping,
+    save_frame_camera_mapping,
+)
 
 SEGMENT_FILENAME = 'segment.ply'
 BACKGROUND_FILENAME = 'background.ply'
@@ -39,6 +46,7 @@ FINE_FILENAME = 'fine.ply'
 COMPRESSION_FILENAME = 'compression.ply'
 MASKS_FILENAME = 'multiview_masks.pkl'
 PARAMS_FILENAME = 'segmentation_params.json'
+VIEW_COVERAGE_MIN_VISIBLE_RATIO = 0.2
 
 
 @dataclass
@@ -201,6 +209,7 @@ def _prepare_sam_frames(
     os.makedirs(frames_folder)
 
     cameras_for_masks = all_cameras
+    source_indices_for_masks = list(range(len(all_cameras)))
     sam_frame_idx = first_frame_idx
 
     if is_iterative:
@@ -212,6 +221,7 @@ def _prepare_sam_frames(
                 f"kept {len(keep_indices)}"
             )
         cameras_for_masks = []
+        source_indices_for_masks = keep_indices
         for new_idx, orig_idx in enumerate(keep_indices):
             shutil.copy2(
                 os.path.join(temp_frames_folder, f"{orig_idx:05d}.jpg"),
@@ -228,7 +238,12 @@ def _prepare_sam_frames(
                     os.path.join(frames_folder, filename)
                 )
 
-    return frames_folder, cameras_for_masks, sam_frame_idx
+    return (
+        frames_folder,
+        cameras_for_masks,
+        sam_frame_idx,
+        source_indices_for_masks,
+    )
 
 
 def _get_mask_folder(
@@ -293,6 +308,22 @@ def _summarize_segmentation_result(result: Dict[str, Any]) -> Dict[str, Any]:
         'final_mask_count': result['final_mask_count'],
         'total_points': result['total_points'],
         'valid_masks_count': result['valid_masks_count'],
+        'removed_masks_count': result.get('removed_masks_count', 0),
+        'removed_mask_indices': result.get('removed_mask_indices', []),
+        'filtered_empty_frames': result.get('filtered_empty_frames', 0),
+        'filtered_source_frame_indices': result.get(
+            'filtered_source_frame_indices', []
+        ),
+        'filtered_train_camera_indices': result.get(
+            'filtered_train_camera_indices', []
+        ),
+        'filtered_sphere_camera_indices': result.get(
+            'filtered_sphere_camera_indices', []
+        ),
+        'frame_mapping_file': (
+            os.path.basename(result['frame_mapping_path'])
+            if result.get('frame_mapping_path') else None
+        ),
     }
 
 
@@ -341,13 +372,20 @@ def _build_segmentation_params(
                 'views': 'train_only',
                 'num_cameras': len(cached_train_cameras),
                 'valid_masks': round1_info['valid_masks_count'],
+                'removed_low_quality_masks': round1_info['removed_masks_count'],
+                'removed_low_quality_mask_indices': round1_info['removed_mask_indices'],
+                'filtered_empty_frames': round1_info['filtered_empty_frames'],
+                'filtered_source_frame_indices': round1_info['filtered_source_frame_indices'],
+                'filtered_train_camera_indices': round1_info['filtered_train_camera_indices'],
+                'filtered_sphere_camera_indices': round1_info['filtered_sphere_camera_indices'],
+                'frame_mapping_file': round1_info['frame_mapping_file'],
                 'output': COARSE_FILENAME,
             },
             'coverage_analysis': {
                 'total_cameras': coverage['total_cameras'],
                 'valid_cameras': coverage['valid_cameras'],
                 'invalid_cameras': coverage['invalid_cameras'],
-                'min_visible_ratio': coverage.get('min_visible_ratio', 0.2),
+                'min_visible_ratio': coverage['min_visible_ratio'],
                 'max_angular_gap_deg': coverage['max_angular_gap_deg'],
                 'mean_angular_gap_deg': coverage['mean_angular_gap_deg'],
                 'angular_gap_threshold_deg': angular_gap_threshold,
@@ -360,6 +398,13 @@ def _build_segmentation_params(
                 'n_layers': n_layers,
                 'n_points_per_layer': n_points_per_layer,
                 'valid_masks': round2_info['valid_masks_count'],
+                'removed_low_quality_masks': round2_info['removed_masks_count'],
+                'removed_low_quality_mask_indices': round2_info['removed_mask_indices'],
+                'filtered_empty_frames': round2_info['filtered_empty_frames'],
+                'filtered_source_frame_indices': round2_info['filtered_source_frame_indices'],
+                'filtered_train_camera_indices': round2_info['filtered_train_camera_indices'],
+                'filtered_sphere_camera_indices': round2_info['filtered_sphere_camera_indices'],
+                'frame_mapping_file': round2_info['frame_mapping_file'],
                 'output': FINE_FILENAME,
             } if round2_info is not None else None,
         },
@@ -375,6 +420,11 @@ def _build_segmentation_params(
             'tolerance_ratio': tolerance_ratio,
             'original_points': abr_result['original_points'],
             'compressed_points': abr_result['compressed_points'],
+            'aligned_masks': abr_result['aligned_masks'],
+            'used_explicit_frame_mapping': abr_result[
+                'used_explicit_frame_mapping'
+            ],
+            'frame_mapping_file': abr_result['frame_mapping_file'],
             'output': COMPRESSION_FILENAME,
         })
     return params
@@ -553,6 +603,7 @@ def run_segmentation(
     render_cameras: Optional[List] = None,
     skip_render: bool = False,
     pre_mask_folder: Optional[str] = None,
+    stage_name: str = "segmentation",
 ) -> Dict[str, Any]:
     """Run the core segmentation workflow.
     
@@ -573,8 +624,25 @@ def run_segmentation(
         temp_frames_folder = os.path.join(ctx.model_path, "temp_frames")
 
     is_iterative = prev_seg_path is not None and os.path.exists(str(prev_seg_path))
-    frames_folder, cameras_for_masks, sam_frame_idx = _prepare_sam_frames(
+    (
+        frames_folder,
+        cameras_for_masks,
+        sam_frame_idx,
+        source_indices_for_masks,
+    ) = _prepare_sam_frames(
         output_dir, temp_frames_folder, all_cameras, first_frame_idx, is_iterative
+    )
+
+    # Persist the explicit relationship before SAM runs.  Iterative filtering
+    # renumbers frames, so mask filenames alone cannot recover camera identity.
+    frame_camera_mapping = build_frame_camera_mapping(
+        source_frame_indices=source_indices_for_masks,
+        total_source_frames=len(all_cameras),
+        num_train_cameras=len(cached_train_cameras),
+        stage=stage_name,
+    )
+    frame_mapping_path = save_frame_camera_mapping(
+        output_dir, frame_camera_mapping
     )
 
     # Step 2: call SAM or use precomputed masks.
@@ -583,9 +651,30 @@ def run_segmentation(
         object_name, api_url, pre_mask_folder
     )
     mask_folder = sam_mask_folder
+    absolute_mask_folder = os.path.abspath(mask_folder)
+    absolute_output_dir = os.path.abspath(output_dir)
+    try:
+        mask_is_within_output = os.path.commonpath([
+            absolute_mask_folder, absolute_output_dir
+        ]) == absolute_output_dir
+    except ValueError:
+        mask_is_within_output = False
+    frame_camera_mapping['mask_folder'] = (
+        os.path.relpath(absolute_mask_folder, absolute_output_dir)
+        if mask_is_within_output else absolute_mask_folder
+    )
+    frame_mapping_path = save_frame_camera_mapping(
+        output_dir, frame_camera_mapping
+    )
 
     # Step 3: filter empty and low-quality masks.
     removed_indices = filter_low_quality_masks(mask_folder=mask_folder)
+    frame_camera_mapping['removed_low_quality_mask_indices'] = [
+        int(idx) for idx in removed_indices
+    ]
+    frame_mapping_path = save_frame_camera_mapping(
+        output_dir, frame_camera_mapping
+    )
 
     # Step 4: back-project valid masks and vote.
     masks_dict = load_masks_from_folder(mask_folder)
@@ -619,7 +708,21 @@ def run_segmentation(
             'total_points': len(xyz),
             'valid_masks_count': len(valid_masks),
             'removed_masks_count': len(removed_indices),
-            'filtered_empty_frames': len(all_cameras) - len(cameras_for_masks),
+            'removed_mask_indices': removed_indices,
+            'filtered_empty_frames': len(
+                frame_camera_mapping['filtered_source_frame_indices']
+            ),
+            'filtered_source_frame_indices': frame_camera_mapping[
+                'filtered_source_frame_indices'
+            ],
+            'filtered_train_camera_indices': frame_camera_mapping[
+                'filtered_train_camera_indices'
+            ],
+            'filtered_sphere_camera_indices': frame_camera_mapping[
+                'filtered_sphere_camera_indices'
+            ],
+            'frame_camera_mapping': frame_camera_mapping,
+            'frame_mapping_path': frame_mapping_path,
         }
 
     # Repeat voting on the original model when saving the background.
@@ -683,7 +786,21 @@ def run_segmentation(
         'total_points': len(xyz),
         'valid_masks_count': len(valid_masks),
         'removed_masks_count': len(removed_indices),
-        'filtered_empty_frames': len(all_cameras) - len(cameras_for_masks),
+        'removed_mask_indices': removed_indices,
+        'filtered_empty_frames': len(
+            frame_camera_mapping['filtered_source_frame_indices']
+        ),
+        'filtered_source_frame_indices': frame_camera_mapping[
+            'filtered_source_frame_indices'
+        ],
+        'filtered_train_camera_indices': frame_camera_mapping[
+            'filtered_train_camera_indices'
+        ],
+        'filtered_sphere_camera_indices': frame_camera_mapping[
+            'filtered_sphere_camera_indices'
+        ],
+        'frame_camera_mapping': frame_camera_mapping,
+        'frame_mapping_path': frame_mapping_path,
     }
 
 
@@ -761,6 +878,8 @@ def apply_boundary_compression(
     cached_train_cameras: List,
     render_cameras: Optional[List] = None,
     mask_folder: Optional[str] = None,
+    frame_mapping_path: Optional[str] = None,
+    allow_legacy_positional_alignment: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Apply standalone Axis-aware Boundary Refinement (ABR).
 
@@ -771,6 +890,10 @@ def apply_boundary_compression(
     Args:
         mask_folder: Directory containing SAM masks. When omitted, search
             ``save_dir`` for a ``*_mask`` directory to support Gradio runs.
+        frame_mapping_path: JSON manifest mapping renumbered SAM frames to
+            their original cameras. New runs persist this automatically.
+        allow_legacy_positional_alignment: Opt in to positional alignment for
+            an audited legacy output that has no mapping manifest.
 
     Returns:
         Compression statistics, or ``None`` when ABR cannot be applied.
@@ -780,6 +903,40 @@ def apply_boundary_compression(
 
     seg_path = os.path.join(save_dir, SEGMENT_FILENAME)
     if not os.path.exists(seg_path):
+        return None
+
+    # Resolve the manifest before searching for masks.  New manifests record
+    # the exact mask directory, which avoids selecting another round's masks
+    # when a run directory contains more than one ``*_mask`` folder.
+    resolved_mapping_path = frame_mapping_path
+    mapping_was_explicit = resolved_mapping_path is not None
+    if resolved_mapping_path and not os.path.isabs(resolved_mapping_path):
+        resolved_mapping_path = os.path.join(save_dir, resolved_mapping_path)
+    if resolved_mapping_path is None:
+        latest_mapping_path = os.path.join(
+            save_dir, LATEST_FRAME_MAPPING_FILENAME
+        )
+        if os.path.exists(latest_mapping_path):
+            resolved_mapping_path = latest_mapping_path
+
+    candidate_mapping = None
+    recorded_mask_folder = None
+    if resolved_mapping_path and os.path.exists(resolved_mapping_path):
+        candidate_mapping = load_frame_camera_mapping(resolved_mapping_path)
+        recorded_mask_folder = candidate_mapping.get('mask_folder')
+        if recorded_mask_folder and not os.path.isabs(recorded_mask_folder):
+            recorded_mask_folder = os.path.join(save_dir, recorded_mask_folder)
+        if (
+            (not mask_folder or not os.path.exists(mask_folder))
+            and recorded_mask_folder
+            and os.path.exists(recorded_mask_folder)
+        ):
+            mask_folder = recorded_mask_folder
+    elif mapping_was_explicit:
+        print(
+            f"[ABR][ERROR] Frame-camera mapping not found: "
+            f"{resolved_mapping_path}"
+        )
         return None
 
     # Search for an interactive-run mask directory when none was provided.
@@ -801,6 +958,31 @@ def apply_boundary_compression(
 
     print(f"[ABR] Using mask directory: {mask_folder}")
 
+    frame_camera_mapping = None
+    if candidate_mapping is not None:
+        mapping_matches_masks = (
+            not recorded_mask_folder
+            or os.path.abspath(recorded_mask_folder) == os.path.abspath(mask_folder)
+        )
+        if not mapping_matches_masks:
+            print(
+                "[ABR][ERROR] Frame-camera mapping and mask directory do "
+                "not belong to the same segmentation round; skipping ABR"
+            )
+            return None
+        frame_camera_mapping = candidate_mapping
+
+    if (
+        frame_camera_mapping is None
+        and not allow_legacy_positional_alignment
+    ):
+        print(
+            "[ABR][ERROR] No frame-camera mapping is available. Refusing "
+            "legacy positional alignment because filtered training frames "
+            "cannot be ruled out."
+        )
+        return None
+
     # Load the current foreground model.
     gaussians = _load_gaussians(ctx, seg_path)
     num_points = len(gaussians.get_xyz)
@@ -812,9 +994,25 @@ def apply_boundary_compression(
         _clear_cuda()
         return None
 
-    # Align SAM masks with cached training cameras by frame number.
+    # Align SAM masks with cached training cameras using the explicit mapping
+    # persisted by run_segmentation().  Positional alignment is available only
+    # through an explicit opt-in for an independently audited legacy output.
     masks_dict = load_masks_from_folder(mask_folder)
-    valid_masks_2d, valid_cams = _collect_valid_masks(cached_train_cameras, masks_dict)
+    if frame_camera_mapping is not None:
+        valid_masks_2d, valid_cams = collect_mapped_train_masks(
+            cached_train_cameras, masks_dict, frame_camera_mapping
+        )
+        print(
+            f"[ABR] Explicitly aligned {len(valid_masks_2d)} masks to "
+            "training cameras"
+        )
+    else:
+        print(
+            "[ABR][WARN] Using explicitly enabled legacy positional alignment"
+        )
+        valid_masks_2d, valid_cams = _collect_valid_masks(
+            cached_train_cameras, masks_dict
+        )
 
     if len(valid_masks_2d) == 0:
         del gaussians
@@ -905,6 +1103,12 @@ def apply_boundary_compression(
     return {
         'original_points': num_points,
         'compressed_points': n_compressed,
+        'aligned_masks': len(valid_masks_2d),
+        'used_explicit_frame_mapping': frame_camera_mapping is not None,
+        'frame_mapping_file': (
+            os.path.basename(resolved_mapping_path)
+            if frame_camera_mapping is not None else None
+        ),
         'seg_path': seg_path,
         'preview_images': preview_images,
     }
@@ -1027,7 +1231,7 @@ def compute_view_coverage(
     segment_ply_path: str,
     train_cameras: List,
     sh_degree: int,
-    min_visible_ratio: float = 0.01,
+    min_visible_ratio: float = VIEW_COVERAGE_MIN_VISIBLE_RATIO,
     angular_gap_threshold: float = 90.0,
     n_probe_points: int = 2000,
 ) -> Dict[str, Any]:
@@ -1117,6 +1321,7 @@ def compute_view_coverage(
             'total_cameras': n_total,
             'valid_cameras': 0,
             'invalid_cameras': n_invalid,
+            'min_visible_ratio': float(min_visible_ratio),
             'max_angular_gap_deg': 360.0,
             'mean_angular_gap_deg': 360.0,
             'need_sphere_sampling': True,
@@ -1141,6 +1346,7 @@ def compute_view_coverage(
             'total_cameras': n_total,
             'valid_cameras': 0,
             'invalid_cameras': n_invalid,
+            'min_visible_ratio': float(min_visible_ratio),
             'max_angular_gap_deg': 360.0,
             'mean_angular_gap_deg': 360.0,
             'need_sphere_sampling': True,
@@ -1175,6 +1381,7 @@ def compute_view_coverage(
         'total_cameras': n_total,
         'valid_cameras': n_valid,
         'invalid_cameras': n_invalid,
+        'min_visible_ratio': float(min_visible_ratio),
         'max_angular_gap_deg': max_angular_gap,
         'mean_angular_gap_deg': mean_angular_gap,
         'need_sphere_sampling': need_sphere,
@@ -1305,6 +1512,7 @@ def run_two_round_pipeline(
         render_cameras=render_cameras,
         skip_render=True,  # Render only after the final stage is known.
         pre_mask_folder=pre_mask_folder_round1,
+        stage_name="round1",
     )
 
     round1_seg_path = round1_result['seg_path']
@@ -1348,6 +1556,7 @@ def run_two_round_pipeline(
         segment_ply_path=round1_seg_path,
         train_cameras=list(cached_train_cameras),
         sh_degree=ctx.sh_degree,
+        min_visible_ratio=VIEW_COVERAGE_MIN_VISIBLE_RATIO,
         angular_gap_threshold=angular_gap_threshold,
     )
 
@@ -1403,6 +1612,7 @@ def run_two_round_pipeline(
             temp_frames_folder=temp_frames_folder,
             render_cameras=render_cameras,
             skip_render=True,  # Render after optional ABR.
+            stage_name="round2",
         )
 
         round2_seg_path = round2_result.get('seg_path')
@@ -1441,6 +1651,11 @@ def run_two_round_pipeline(
                 cached_train_cameras=cached_train_cameras,
                 render_cameras=render_cameras,
                 mask_folder=abr_mask_folder,
+                frame_mapping_path=(
+                    round2_result['frame_mapping_path']
+                    if round2_result is not None
+                    else round1_result['frame_mapping_path']
+                ),
             )
         except RuntimeError as e:
             print(f"[Pipeline][WARN] ABR rendering failed: {e}")

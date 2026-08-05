@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 from seg_utils.pipeline import (
     create_segmentation_context, load_views, run_segmentation,
     apply_outlier_filter, apply_boundary_compression, update_threshold,
-    compute_view_coverage
+    compute_view_coverage, VIEW_COVERAGE_MIN_VISIBLE_RATIO
 )
 from seg_utils.general_utils import render_segmented_results
 
@@ -161,6 +161,34 @@ def _merge_render_cameras(cached_train_cameras, cached_test_cameras):
     return cached_train_cameras
 
 
+def _frame_alignment_metadata(segmentation_result):
+    """Return the persisted frame-alignment fields for one SAM round."""
+    mapping_path = segmentation_result.get('frame_mapping_path')
+    return {
+        'removed_low_quality_masks': segmentation_result.get(
+            'removed_masks_count', 0
+        ),
+        'removed_low_quality_mask_indices': segmentation_result.get(
+            'removed_mask_indices', []
+        ),
+        'filtered_empty_frames': segmentation_result.get(
+            'filtered_empty_frames', 0
+        ),
+        'filtered_source_frame_indices': segmentation_result.get(
+            'filtered_source_frame_indices', []
+        ),
+        'filtered_train_camera_indices': segmentation_result.get(
+            'filtered_train_camera_indices', []
+        ),
+        'filtered_sphere_camera_indices': segmentation_result.get(
+            'filtered_sphere_camera_indices', []
+        ),
+        'frame_mapping_file': (
+            os.path.basename(mapping_path) if mapping_path else None
+        ),
+    }
+
+
 def segment_3dgs_two_round_pipeline(
     model_path, source_path, cached_train_cameras, cached_test_cameras,
     first_frame_idx,
@@ -204,6 +232,7 @@ def segment_3dgs_two_round_pipeline(
         prev_seg_path=None,
         render_cameras=render_cameras,
         skip_render=True,
+        stage_name="round1",
     )
 
     round1_seg_path = round1_result['seg_path']
@@ -226,6 +255,7 @@ def segment_3dgs_two_round_pipeline(
         segment_ply_path=round1_seg_path,
         train_cameras=list(cached_train_cameras),
         sh_degree=ctx.sh_degree,
+        min_visible_ratio=VIEW_COVERAGE_MIN_VISIBLE_RATIO,
         angular_gap_threshold=angular_gap_threshold,
     )
 
@@ -265,13 +295,14 @@ def segment_3dgs_two_round_pipeline(
                     'views': 'train_only',
                     'num_cameras': len(cached_train_cameras),
                     'valid_masks': round1_result['valid_masks_count'],
+                    **_frame_alignment_metadata(round1_result),
                     'output': 'coarse.ply',
                 },
                 'coverage_analysis': {
                     'total_cameras': coverage['total_cameras'],
                     'valid_cameras': coverage['valid_cameras'],
                     'invalid_cameras': coverage['invalid_cameras'],
-                    'min_visible_ratio': coverage.get('min_visible_ratio', 0.2),
+                    'min_visible_ratio': coverage['min_visible_ratio'],
                     'max_angular_gap_deg': coverage['max_angular_gap_deg'],
                     'mean_angular_gap_deg': coverage['mean_angular_gap_deg'],
                     'angular_gap_threshold_deg': angular_gap_threshold,
@@ -358,7 +389,8 @@ Output: coarse.ply -> segment.ply
         api_url=api_url_base,
         output_dir=save_dir,
         prev_seg_path=coarse_path,
-        render_cameras=render_cameras
+        render_cameras=render_cameras,
+        stage_name="round2",
     )
 
     fine_path = os.path.join(save_dir, 'fine.ply')
@@ -389,13 +421,14 @@ Output: coarse.ply -> segment.ply
                 'views': 'train_only',
                 'num_cameras': len(cached_train_cameras),
                 'valid_masks': round1_result['valid_masks_count'],
+                **_frame_alignment_metadata(round1_result),
                 'output': 'coarse.ply',
             },
             'coverage_analysis': {
                 'total_cameras': coverage['total_cameras'],
                 'valid_cameras': coverage['valid_cameras'],
                 'invalid_cameras': coverage['invalid_cameras'],
-                'min_visible_ratio': coverage.get('min_visible_ratio', 0.2),
+                'min_visible_ratio': coverage['min_visible_ratio'],
                 'max_angular_gap_deg': coverage['max_angular_gap_deg'],
                 'mean_angular_gap_deg': coverage['mean_angular_gap_deg'],
                 'angular_gap_threshold_deg': angular_gap_threshold,
@@ -408,6 +441,7 @@ Output: coarse.ply -> segment.ply
                 'n_layers': n_layers,
                 'n_points_per_layer': n_points_per_layer,
                 'valid_masks': round2_result['valid_masks_count'],
+                **_frame_alignment_metadata(round2_result),
                 'output': 'fine.ply',
             },
         },
@@ -527,6 +561,14 @@ def apply_boundary_compression_wrapper(save_dir, min_compression, tolerance_rati
     )
     render_cameras = _merge_render_cameras(cached_train_cameras, cached_test_cameras)
 
+    segmentation_params = params.get('segmentation', {})
+    latest_round_params = (
+        segmentation_params.get('round2')
+        or segmentation_params.get('round1')
+        or {}
+    )
+    frame_mapping_path = latest_round_params.get('frame_mapping_file')
+
     result = apply_boundary_compression(
         ctx=ctx,
         save_dir=save_dir,
@@ -534,10 +576,17 @@ def apply_boundary_compression_wrapper(save_dir, min_compression, tolerance_rati
         tolerance_ratio=tolerance_ratio,
         cached_train_cameras=cached_train_cameras,
         render_cameras=render_cameras,
+        frame_mapping_path=frame_mapping_path,
     )
 
     if result is None:
-        return "ABR boundary refinement failed; masks may be missing", None, [], None
+        return (
+            "ABR boundary refinement failed; masks or the frame-camera "
+            "mapping may be missing or mismatched",
+            None,
+            [],
+            None,
+        )
 
     # Preserve a named copy for this processing stage.
     compression_path = os.path.join(save_dir, 'compression.ply')
@@ -560,6 +609,11 @@ Output: compression.ply -> segment.ply
         'tolerance_ratio': tolerance_ratio,
         'original_points': result['original_points'],
         'compressed_points': result['compressed_points'],
+        'aligned_masks': result['aligned_masks'],
+        'used_explicit_frame_mapping': result[
+            'used_explicit_frame_mapping'
+        ],
+        'frame_mapping_file': result['frame_mapping_file'],
         'output': 'compression.ply',
     }
     params['current_stage'] = 'compression'

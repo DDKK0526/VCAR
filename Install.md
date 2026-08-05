@@ -145,12 +145,18 @@ background.ply
 compression.ply
 outlier.ply
 segmentation_params.json
+sam_frame_mapping.json
+sam_frame_mapping_round1.json
+sam_frame_mapping_round2.json
 multiview_masks.pkl
 render_segment/
 render_mask_segment/
 ```
 
 `segment.ply` is always the latest foreground segmentation result.
+The latest and round-specific `sam_frame_mapping*.json` manifests preserve
+the camera identity of frames renumbered after iterative empty-frame
+filtering. The Round 2 manifest is created only when Round 2 runs.
 
 ## Notes
 

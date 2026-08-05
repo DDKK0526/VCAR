@@ -124,11 +124,23 @@ outputs include:
 ├── background.ply
 ├── compression.ply
 ├── segmentation_params.json
+├── sam_frame_mapping.json
+├── sam_frame_mapping_round1.json
+├── sam_frame_mapping_round2.json
 ├── render_segment/
 └── render_mask_segment/
 ```
 
 `segment.ply` always contains the latest foreground result.
+`sam_frame_mapping.json` points to the latest round's mapping, while the
+round-specific manifests preserve each renumbered SAM frame's original
+training or spherical camera index. `segmentation_params.json` records the
+20% view-visibility threshold and the exact frame and mask indices removed in
+each round. The Round 2 mapping file is absent when Round 2 is skipped.
+ABR fails closed when a legacy output has no mapping manifest; the Python API
+offers `allow_legacy_positional_alignment=True` only for outputs that have
+been independently audited and are known not to contain a filtered training
+frame.
 
 ## Benchmark reproduction
 
