@@ -18,6 +18,7 @@ outputs/
 temp_frames/
 **/temp_frames/
 data/
+tests/
 
 # Editor and OS files
 .DS_Store

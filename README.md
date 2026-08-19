@@ -1,8 +1,10 @@
 # VCAR
 
-Official implementation of
-[VCAR: Training-Free 3DGS Segmentation via View Completeness and Axis-Aware Boundary Refinement](https://arxiv.org/abs/XXXX.XXXXX),
-accepted by ACM Multimedia 2026 (ACM MM 2026).
+Official implementation of *VCAR: Training-Free 3DGS Segmentation via View
+Completeness and Axis-Aware Boundary Refinement*, accepted by ACM Multimedia
+2026 (ACM MM 2026).
+
+> **TODO:** Add the arXiv link once the preprint is available.
 
 VCAR segments objects from an already trained 3D Gaussian Splatting (3DGS)
 scene without additional training.
