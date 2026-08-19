@@ -196,12 +196,13 @@ def segment_3dgs_two_round_pipeline(
     threshold_round1, threshold_round2, save_background,
     n_layers, n_points_per_layer,
     skip_round2_if_covered, angular_gap_threshold,
+    min_visible_ratio=VIEW_COVERAGE_MIN_VISIBLE_RATIO,
     object_name="object", api_url_base="http://localhost:8000"
 ):
     """Run the two-round automatic segmentation workflow with progress yields.
 
     Round 1: training views -> SAM -> voting (threshold_round1)
-    Coverage test: compute_view_coverage(angular_gap_threshold)
+    Coverage test: compute_view_coverage(min_visible_ratio, angular_gap_threshold)
     Round 2: conditional training+spherical views -> SAM -> voting
     """
     if text is None and cached_train_cameras is None:
@@ -255,7 +256,7 @@ def segment_3dgs_two_round_pipeline(
         segment_ply_path=round1_seg_path,
         train_cameras=list(cached_train_cameras),
         sh_degree=ctx.sh_degree,
-        min_visible_ratio=VIEW_COVERAGE_MIN_VISIBLE_RATIO,
+        min_visible_ratio=min_visible_ratio,
         angular_gap_threshold=angular_gap_threshold,
     )
 
@@ -780,6 +781,13 @@ def create_gradio_interface():
                         minimum=0.0, maximum=360.0, step=1.0, value=90.0,
                         label="Angular-gap threshold (0=always Round 2, 360=never)",
                     )
+                    min_visible_ratio = gr.Slider(
+                        minimum=0.0,
+                        maximum=1.0,
+                        step=0.01,
+                        value=VIEW_COVERAGE_MIN_VISIBLE_RATIO,
+                        label="Minimum visible ratio for a valid view",
+                    )
                     save_background = gr.Checkbox(
                         label="Save background model",
                         value=False,
@@ -925,7 +933,8 @@ def create_gradio_interface():
                                      threshold_r1, threshold_r2,
                                      save_background,
                                      n_layers_val, n_points_per_layer_val,
-                                     skip_round2_val, angular_gap_val,
+                                     skip_round2_val, min_visible_ratio_val,
+                                     angular_gap_val,
                                      object_name_val, api_url_val):
             if cached_train_cameras is None or frame_choice is None:
                 yield "Load views and select an annotation frame first", None, [], None, None
@@ -940,6 +949,7 @@ def create_gradio_interface():
                 threshold_r1, threshold_r2, save_background,
                 int(n_layers_val), int(n_points_per_layer_val),
                 skip_round2_val, angular_gap_val,
+                min_visible_ratio=min_visible_ratio_val,
                 object_name=object_name_val,
                 api_url_base=api_url_val
             ):
@@ -955,7 +965,8 @@ def create_gradio_interface():
                 threshold_round1, threshold_round2,
                 save_background,
                 n_layers, n_points_per_layer,
-                skip_round2_if_covered, angular_gap_threshold,
+                skip_round2_if_covered, min_visible_ratio,
+                angular_gap_threshold,
                 object_name, api_url
             ],
             outputs=[output_text, output_seg, seg_gallery, current_save_dir, current_seg_path_state]

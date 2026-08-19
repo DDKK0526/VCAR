@@ -3,13 +3,16 @@
 The implementation uses PyTorch tensor operations and selects CUDA when
 available. It restores each 2D covariance ellipse from gsplat conics, samples
 the four major/minor-axis endpoints, and checks them against the mask. For an
-overflowing Gaussian, T = J * W * R attributes the 2D overflow direction to
-its contributing 3D axes so only the dominant axis is compressed.
+overflowing Gaussian, the depth-free form of T = J * W * R retains first-order
+perspective coupling and attributes the 2D overflow direction to its
+contributing 3D axes so only the dominant axis is compressed.
 """
 
 import numpy as np
 import cv2
 import torch
+
+from seg_utils.axis_attribution import depth_free_perspective_axis_projection
 
 
 # Chunk size used to limit peak GPU memory during batched sampling.
@@ -382,7 +385,9 @@ def compute_boundary_compression_axes(
             # Anisotropic 3D-axis attribution and directional distance
             # ============================================================
             W_3x3 = view_matrices[view_idx][:3, :3].to(dev).float()  # [3, 3]
-            fx, fy, _cx, _cy = intrinsics_list[view_idx]
+            fx, fy, principal_x, principal_y = (
+                float(value) for value in intrinsics_list[view_idx]
+            )
 
             # Flatten all overflowing (Gaussian, endpoint) pairs.
             overflow_ep_flags = ep_outside[overflow_local_idx]  # [K, 4]
@@ -427,6 +432,8 @@ def compute_boundary_compression_axes(
             nc_dirs = ov_dirs[nc_idx]              # [C, 2]
             nc_sigma_sq = ov_sigma_sq[nc_idx]      # [C]
             nc_target_var = target_var[nc_idx]      # [C]
+            nc_cx = ov_cx[nc_idx]                   # [C]
+            nc_cy = ov_cy[nc_idx]                   # [C]
             C_len = len(nc_idx)
 
             # Batched 3D-axis contribution analysis.
@@ -434,10 +441,25 @@ def compute_boundary_compression_axes(
             R_gs_batch = all_rot_matrices[nc_gid]              # [C, 3, 3]
             WR_batch = W_3x3.unsqueeze(0) @ R_gs_batch         # [C, 3, 3]
 
-            # q contains the projected 2D direction of every 3D axis.
+            # Retain the complete first-order pinhole perspective coupling.
+            # The exact Jacobian also has a shared 1/z factor; it cancels in
+            # axis ranking and normalized contribution, so only q_bar is used.
+            projected_x, projected_y = depth_free_perspective_axis_projection(
+                axis_x=WR_batch[:, 0, :],
+                axis_y=WR_batch[:, 1, :],
+                axis_z=WR_batch[:, 2, :],
+                mean_x=nc_cx.unsqueeze(1),
+                mean_y=nc_cy.unsqueeze(1),
+                fx=fx,
+                fy=fy,
+                principal_x=principal_x,
+                principal_y=principal_y,
+            )
+
+            # q_bar contains the depth-free projected direction of every axis.
             q_batch = torch.zeros(C_len, 3, 2, dtype=torch.float32, device=dev)
-            q_batch[:, :, 0] = fx * WR_batch[:, 0, :]  # [C, 3]
-            q_batch[:, :, 1] = fy * WR_batch[:, 1, :]  # [C, 3]
+            q_batch[:, :, 0] = projected_x  # [C, 3]
+            q_batch[:, :, 1] = projected_y  # [C, 3]
 
             # Dot product u * q[d].
             dot = (nc_dirs.unsqueeze(1) * q_batch).sum(dim=2)  # [C, 3]

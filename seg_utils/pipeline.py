@@ -46,7 +46,7 @@ FINE_FILENAME = 'fine.ply'
 COMPRESSION_FILENAME = 'compression.ply'
 MASKS_FILENAME = 'multiview_masks.pkl'
 PARAMS_FILENAME = 'segmentation_params.json'
-VIEW_COVERAGE_MIN_VISIBLE_RATIO = 0.2
+VIEW_COVERAGE_MIN_VISIBLE_RATIO = 0.01
 
 
 @dataclass
@@ -1255,6 +1255,12 @@ def compute_view_coverage(
         Coverage statistics, including camera counts, angular gaps, whether
         spherical sampling is needed, and valid camera indices.
     """
+    if not 0.0 <= min_visible_ratio <= 1.0:
+        raise ValueError(
+            "min_visible_ratio must be between 0.0 and 1.0, got "
+            f"{min_visible_ratio}"
+        )
+
     from seg_utils.ensemble_utils import project_to_2d
     from seg_utils.post_filter import compute_robust_sphere_center
 
@@ -1420,6 +1426,7 @@ def run_two_round_pipeline(
     skip_render: bool = False,
     pre_mask_folder_round1: Optional[str] = None,
     temp_frames_folder: Optional[str] = None,
+    min_visible_ratio: float = VIEW_COVERAGE_MIN_VISIBLE_RATIO,
 ) -> Dict[str, Any]:
     """Run the complete two-round segmentation pipeline without a UI.
 
@@ -1428,7 +1435,7 @@ def run_two_round_pipeline(
 
     Workflow:
       Round 1: training views -> SAM -> voting -> ``coarse.ply``
-      Coverage: ``compute_view_coverage(angular_gap_threshold)``
+      Coverage: ``compute_view_coverage(min_visible_ratio, angular_gap_threshold)``
       Round 2: training and optional spherical views -> ``fine.ply``
       Optional ABR boundary refinement -> ``compression.ply``
       ``segment.ply`` always contains the latest result.
@@ -1458,6 +1465,8 @@ def run_two_round_pipeline(
         skip_render: Skip final rendering for faster batch execution.
         pre_mask_folder_round1: Optional precomputed Round 1 masks.
         temp_frames_folder: Shared render-frame cache for both rounds.
+        min_visible_ratio: Minimum projected foreground ratio for a training
+            camera to count as a valid coverage view.
 
     Returns:
         Paths, coverage statistics, per-round summaries, serialized
@@ -1556,7 +1565,7 @@ def run_two_round_pipeline(
         segment_ply_path=round1_seg_path,
         train_cameras=list(cached_train_cameras),
         sh_degree=ctx.sh_degree,
-        min_visible_ratio=VIEW_COVERAGE_MIN_VISIBLE_RATIO,
+        min_visible_ratio=min_visible_ratio,
         angular_gap_threshold=angular_gap_threshold,
     )
 

@@ -1,22 +1,22 @@
-﻿scene_name,object_name,gt_object_name,prompt_text,first_frame_idx,fg_points,bg_points,box,threshold_r1,threshold_r2,angular_gap_threshold,n_layers,n_points_per_layer,boundary_refine,min_compression,tolerance_ratio,api_url
-figurines,bag,bag,,0,"[[387, 212]]",[],"[297, 84, 512, 298]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,green_apple,green apple,,3,"[[149, 275], [122, 230]]",[],"[41, 204, 237, 364]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,green_toy_chair,green toy chair,,37,"[[859, 273]]",[],"[718, 138, 953, 422]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,jake,jake,,15,"[[402, 546]]",[],"[291, 468, 524, 696]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,miffy,miffy,,1,"[[896, 342]]",[],"[825, 280, 943, 436]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,old_camera,old camera,,66,"[[121, 621], [216, 391]]",[],,0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,pikachu,pikachu,,41,"[[472, 163]]",[],"[409, 73, 513, 268]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,pink_ice_cream,pink ice cream,,51,"[[373, 307], [409, 302]]",[],"[266, 243, 463, 357]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,porcelain_hand,porcelain hand,,1,"[[519, 410], [573, 388]]",[],"[485, 281, 628, 456]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,pumpkin,pumpkin,,67,"[[103, 340], [98, 429], [152, 399], [191, 357]]","[[181, 464], [236, 454], [30, 491], [121, 301]]","[4, 300, 245, 512]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,red_apple,red apple,,41,"[[864, 194], [908, 172], [878, 147]]","[[850, 261]]","[781, 114, 952, 279]",0.7,0.5,90,4,8,True,0.2,0.2,http://localhost:8000
-figurines,red_toy_chair,red toy chair,,12,"[[776, 220]]",[],"[655, 75, 871, 341]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,rubber_duck_with_buoy,rubber duck with buoy,,9,"[[83, 630], [139, 635], [180, 581]]",[],,0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,rubber_duck_with_hat,rubber duck with hat,,9,"[[782, 168], [797, 135]]",[],"[719, 75, 850, 241]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,rubics_cube,rubics cube,,9,"[[735, 225]]","[[786, 160]]","[668, 114, 849, 301]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,spatula,spatula,,10,"[[700, 155], [723, 134], [611, 205]]","[[681, 238], [620, 288]]","[523, 89, 774, 240]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,tesla_door_handle,tesla door handle,,90,"[[154, 485], [212, 337], [184, 380]]","[[230, 453], [164, 335]]","[114, 251, 261, 550]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,toy_cat_statue,toy cat statue,,2,"[[218, 241], [241, 289], [245, 315]]",[],"[145, 187, 321, 366]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,toy_elephant,toy elephant,,0,"[[730, 236], [716, 310]]",[],"[665, 164, 787, 360]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,waldo,waldo,,35,"[[773, 303], [763, 338]]","[[709, 307], [632, 362], [643, 425], [761, 432], [832, 425], [882, 374], [839, 345], [825, 363]]","[709, 230, 833, 424]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
-figurines,pirate_hat,pirate hat,,10,"[[842, 162]]",[],"[785, 150, 885, 190]",0.4,0.5,120,4,8,True,0.2,0.2,http://localhost:8000
+﻿scene_name,object_name,gt_object_name,prompt_text,first_frame_idx,fg_points,bg_points,box,threshold_r1,threshold_r2,min_visible_ratio,angular_gap_threshold,n_layers,n_points_per_layer,boundary_refine,min_compression,tolerance_ratio,api_url
+figurines,bag,bag,,0,"[[387, 212]]",[],"[297, 84, 512, 298]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,green_apple,green apple,,3,"[[149, 275], [122, 230]]",[],"[41, 204, 237, 364]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,green_toy_chair,green toy chair,,37,"[[859, 273]]",[],"[718, 138, 953, 422]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,jake,jake,,15,"[[402, 546]]",[],"[291, 468, 524, 696]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,miffy,miffy,,1,"[[896, 342]]",[],"[825, 280, 943, 436]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,old_camera,old camera,,66,"[[121, 621], [216, 391]]",[],,0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,pikachu,pikachu,,41,"[[472, 163]]",[],"[409, 73, 513, 268]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,pink_ice_cream,pink ice cream,,51,"[[373, 307], [409, 302]]",[],"[266, 243, 463, 357]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,porcelain_hand,porcelain hand,,1,"[[519, 410], [573, 388]]",[],"[485, 281, 628, 456]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,pumpkin,pumpkin,,67,"[[103, 340], [98, 429], [152, 399], [191, 357]]","[[181, 464], [236, 454], [30, 491], [121, 301]]","[4, 300, 245, 512]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,red_apple,red apple,,41,"[[864, 194], [908, 172], [878, 147]]","[[850, 261]]","[781, 114, 952, 279]",0.7,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,red_toy_chair,red toy chair,,12,"[[776, 220]]",[],"[655, 75, 871, 341]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,rubber_duck_with_buoy,rubber duck with buoy,,9,"[[83, 630], [139, 635], [180, 581]]",[],,0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,rubber_duck_with_hat,rubber duck with hat,,9,"[[782, 168], [797, 135]]",[],"[719, 75, 850, 241]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,rubics_cube,rubics cube,,9,"[[735, 225]]","[[786, 160]]","[668, 114, 849, 301]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,spatula,spatula,,10,"[[700, 155], [723, 134], [611, 205]]","[[681, 238], [620, 288]]","[523, 89, 774, 240]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,tesla_door_handle,tesla door handle,,90,"[[154, 485], [212, 337], [184, 380]]","[[230, 453], [164, 335]]","[114, 251, 261, 550]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,toy_cat_statue,toy cat statue,,2,"[[218, 241], [241, 289], [245, 315]]",[],"[145, 187, 321, 366]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,toy_elephant,toy elephant,,0,"[[730, 236], [716, 310]]",[],"[665, 164, 787, 360]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,waldo,waldo,,35,"[[773, 303], [763, 338]]","[[709, 307], [632, 362], [643, 425], [761, 432], [832, 425], [882, 374], [839, 345], [825, 363]]","[709, 230, 833, 424]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000
+figurines,pirate_hat,pirate hat,,10,"[[842, 162]]",[],"[785, 150, 885, 190]",0.4,0.5,0.01,90,4,8,True,0.1,0.6,http://localhost:8000

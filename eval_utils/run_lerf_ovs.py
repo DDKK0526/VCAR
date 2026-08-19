@@ -15,6 +15,7 @@ import gc
 import json
 import random
 import re
+import shutil
 import traceback
 from collections import Counter
 from dataclasses import dataclass
@@ -59,6 +60,7 @@ class Experiment:
     box: list[int] | None
     threshold_r1: float
     threshold_r2: float
+    min_visible_ratio: float
     angular_gap_threshold: float
     n_layers: int
     n_points_per_layer: int
@@ -146,6 +148,11 @@ def load_experiments(config_paths: list[Path]) -> list[Experiment]:
                         threshold_r2=float(
                             _number_field(row, "threshold_r2", 0.5, float)
                         ),
+                        min_visible_ratio=float(
+                            _number_field(
+                                row, "min_visible_ratio", 0.01, float
+                            )
+                        ),
                         angular_gap_threshold=float(
                             _number_field(
                                 row,
@@ -208,6 +215,11 @@ def load_experiments(config_paths: list[Path]) -> list[Experiment]:
                 if experiment.first_frame_idx < 0:
                     raise ValueError(
                         f"first_frame_idx cannot be negative: "
+                        f"{config_path}:{row_index + 2}"
+                    )
+                if not 0.0 <= experiment.min_visible_ratio <= 1.0:
+                    raise ValueError(
+                        f"min_visible_ratio must be between 0 and 1: "
                         f"{config_path}:{row_index + 2}"
                     )
                 if experiment.random_seed < 0:
@@ -374,7 +386,8 @@ def process_experiment(
 ) -> dict[str, Any]:
     from eval_utils.evaluate_2d_masks import (
         evaluate_segmentation,
-        save_comparison_grid,
+        save_mask_comparison_grid,
+        save_rgb_comparison_grid,
     )
     from seg_utils.pipeline import run_two_round_pipeline
 
@@ -435,6 +448,7 @@ def process_experiment(
                 angular_gap_threshold=(
                     experiment.angular_gap_threshold
                 ),
+                min_visible_ratio=experiment.min_visible_ratio,
                 skip_round2_if_covered=True,
                 object_name=experiment.object_name,
                 api_url=api_url_override or experiment.api_url,
@@ -462,9 +476,23 @@ def process_experiment(
         result["miou"] = miou
         result["macc"] = macc
         result["n_views"] = len(frame_results)
-        save_comparison_grid(
-            frame_results, object_output / "eval_comparison.png"
+        thumbnail_height = 256
+        source_height, source_width = frame_results[0]["source_rgb"].shape[:2]
+        thumbnail_size = (
+            max(1, round(source_width * thumbnail_height / source_height)),
+            thumbnail_height,
         )
+        mask_comparison_path = object_output / "eval_mask_comparison.png"
+        save_mask_comparison_grid(
+            frame_results, mask_comparison_path, thumbnail_size
+        )
+        save_rgb_comparison_grid(
+            frame_results,
+            object_output / "eval_rgb_comparison.png",
+            thumbnail_size,
+        )
+        # Preserve the historical filename for downstream scripts.
+        shutil.copy2(mask_comparison_path, object_output / "eval_comparison.png")
         print(
             f"[DONE] mIoU={miou:.4f}, mAcc={macc:.4f}, "
             f"views={len(frame_results)}, train_cameras={train_camera_count}"

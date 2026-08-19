@@ -18,6 +18,7 @@ import csv
 import gc
 import json
 import random
+import shutil
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +58,7 @@ class Experiment:
     box: list[int] | None
     threshold_r1: float
     threshold_r2: float
+    min_visible_ratio: float
     angular_gap_threshold: float
     n_layers: int
     n_points_per_layer: int
@@ -139,6 +141,14 @@ def load_experiments(config_path: Path) -> list[Experiment]:
                     ),
                     threshold_r2=float(
                         _number_field(row, "threshold_r2", 0.8, float)
+                    ),
+                    min_visible_ratio=float(
+                        _number_field(
+                            row,
+                            "min_visible_ratio",
+                            0.01,
+                            float,
+                        )
                     ),
                     angular_gap_threshold=float(
                         _number_field(
@@ -223,6 +233,11 @@ def load_experiments(config_path: Path) -> list[Experiment]:
                 )
             if experiment.first_frame_idx < 0:
                 raise ValueError("first_frame_idx cannot be negative")
+            if not 0.0 <= experiment.min_visible_ratio <= 1.0:
+                raise ValueError(
+                    f"min_visible_ratio must be between 0 and 1: "
+                    f"{config_path}:{row_index + 2}"
+                )
             if experiment.random_seed < 0:
                 raise ValueError("random_seed cannot be negative")
             experiments.append(experiment)
@@ -355,7 +370,7 @@ def render_prediction(
     camera: Any,
     context: Any,
     alpha_threshold: float,
-) -> Any:
+) -> tuple[Any, Any]:
     import numpy as np
     import torch
     from gaussiansplatting.scene.gaussian_model import GaussianModel
@@ -363,7 +378,7 @@ def render_prediction(
 
     gaussians = GaussianModel(context.sh_degree)
     gaussians.load_ply(str(segment_path))
-    _, alphas, _ = render_gsplat_camera(
+    render_rgb, alphas, _ = render_gsplat_camera(
         gaussians,
         camera,
         camera.image_width,
@@ -374,7 +389,7 @@ def render_prediction(
     prediction = (pred_alpha > alpha_threshold).astype(np.uint8)
     del gaussians
     torch.cuda.empty_cache()
-    return prediction
+    return prediction, render_rgb
 
 
 def calculate_metrics(prediction: Any, ground_truth: Any) -> tuple[float, float]:
@@ -389,56 +404,6 @@ def calculate_metrics(prediction: Any, ground_truth: Any) -> tuple[float, float]
         gt.size
     )
     return iou, accuracy
-
-
-def save_comparison(
-    prediction: Any,
-    ground_truth: Any,
-    output_path: Path,
-) -> None:
-    import cv2
-    import numpy as np
-
-    pred = prediction.astype(bool)
-    gt = ground_truth.astype(bool)
-    pred_panel = cv2.cvtColor(
-        (pred.astype(np.uint8) * 255),
-        cv2.COLOR_GRAY2BGR,
-    )
-    gt_panel = cv2.cvtColor(
-        (gt.astype(np.uint8) * 255),
-        cv2.COLOR_GRAY2BGR,
-    )
-    error_panel = np.zeros_like(pred_panel)
-    error_panel[np.logical_and(pred, gt)] = (0, 180, 0)
-    error_panel[np.logical_and(pred, np.logical_not(gt))] = (0, 0, 255)
-    error_panel[np.logical_and(np.logical_not(pred), gt)] = (255, 0, 0)
-
-    panels = [pred_panel, gt_panel, error_panel]
-    labels = ["Prediction", "GT", "TP / FP / FN"]
-    target_height = min(800, ground_truth.shape[0])
-    scale = target_height / ground_truth.shape[0]
-    target_width = max(1, round(ground_truth.shape[1] * scale))
-    resized = []
-    for panel, label in zip(panels, labels):
-        panel = cv2.resize(
-            panel,
-            (target_width, target_height),
-            interpolation=cv2.INTER_NEAREST,
-        )
-        cv2.putText(
-            panel,
-            label,
-            (16, 34),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 255, 0),
-            2,
-            cv2.LINE_AA,
-        )
-        resized.append(panel)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(output_path), cv2.hconcat(resized))
 
 
 def read_existing_stage(output_dir: Path) -> tuple[str, bool]:
@@ -458,6 +423,11 @@ def process_experiment(
     alpha_threshold: float,
     evaluate_only: bool,
 ) -> dict[str, Any]:
+    from eval_utils.evaluate_2d_masks import (
+        camera_rgb_image,
+        save_mask_comparison_grid,
+        save_rgb_comparison_grid,
+    )
     from seg_utils.pipeline import run_two_round_pipeline
 
     model_path, source_path, gt_mask_path = experiment_paths(
@@ -518,6 +488,7 @@ def process_experiment(
                 angular_gap_threshold=(
                     experiment.angular_gap_threshold
                 ),
+                min_visible_ratio=experiment.min_visible_ratio,
                 skip_round2_if_covered=not experiment.force_round2,
                 object_name=experiment.object_name,
                 api_url=api_url_override or experiment.api_url,
@@ -539,28 +510,64 @@ def process_experiment(
 
         camera = find_camera(cameras, experiment.camera_name)
         ground_truth = load_gt_mask(gt_mask_path)
-        prediction = render_prediction(
+        prediction, render_rgb = render_prediction(
             segment_path,
             camera,
             context,
             alpha_threshold,
         )
-        if prediction.shape != ground_truth.shape:
-            import cv2
+        source_rgb = camera_rgb_image(camera)
+        import cv2
 
+        target_size = (ground_truth.shape[1], ground_truth.shape[0])
+        if prediction.shape != ground_truth.shape:
             prediction = cv2.resize(
                 prediction,
-                (ground_truth.shape[1], ground_truth.shape[0]),
+                target_size,
                 interpolation=cv2.INTER_NEAREST,
+            )
+        if render_rgb.shape[:2] != ground_truth.shape:
+            render_rgb = cv2.resize(
+                render_rgb, target_size, interpolation=cv2.INTER_AREA
+            )
+        if source_rgb.shape[:2] != ground_truth.shape:
+            source_rgb = cv2.resize(
+                source_rgb, target_size, interpolation=cv2.INTER_AREA
             )
         iou, accuracy = calculate_metrics(prediction, ground_truth)
         result["iou"] = iou
         result["acc"] = accuracy
-        save_comparison(
-            prediction,
-            ground_truth,
-            object_output / "eval_comparison.png",
+        frame_results = [{
+            "frame": experiment.camera_name,
+            "iou": iou,
+            "pred_mask": prediction,
+            "gt_mask": ground_truth,
+            "source_rgb": source_rgb,
+            "render_rgb": render_rgb,
+        }]
+        thumbnail_height = min(512, ground_truth.shape[0])
+        thumbnail_size = (
+            max(
+                1,
+                round(
+                    ground_truth.shape[1]
+                    * thumbnail_height
+                    / ground_truth.shape[0]
+                ),
+            ),
+            thumbnail_height,
         )
+        mask_comparison_path = object_output / "eval_mask_comparison.png"
+        save_mask_comparison_grid(
+            frame_results, mask_comparison_path, thumbnail_size
+        )
+        save_rgb_comparison_grid(
+            frame_results,
+            object_output / "eval_rgb_comparison.png",
+            thumbnail_size,
+        )
+        # Preserve the historical filename for downstream scripts.
+        shutil.copy2(mask_comparison_path, object_output / "eval_comparison.png")
         print(f"[DONE] IoU={iou:.4f}, Acc={accuracy:.4f}")
     except Exception as error:
         traceback.print_exc()

@@ -7,6 +7,11 @@ accepted by ACM Multimedia 2026 (ACM MM 2026).
 VCAR segments objects from an already trained 3D Gaussian Splatting (3DGS)
 scene without additional training.
 
+ABR axis attribution retains the complete first-order pinhole perspective
+coupling. It removes only the depth factor shared by all three local axes,
+while recovering normalized image coordinates from the projected Gaussian
+center and camera intrinsics.
+
 ## Repository layout
 
 ```text
@@ -124,6 +129,9 @@ outputs include:
 ├── background.ply
 ├── compression.ply
 ├── segmentation_params.json
+├── eval_mask_comparison.png
+├── eval_rgb_comparison.png
+├── eval_comparison.png
 ├── sam_frame_mapping.json
 ├── sam_frame_mapping_round1.json
 ├── sam_frame_mapping_round2.json
@@ -132,11 +140,18 @@ outputs include:
 ```
 
 `segment.ply` always contains the latest foreground result.
+The evaluation runners save aligned Mask and RGB diagnostics as
+`eval_mask_comparison.png` and `eval_rgb_comparison.png`. The RGB figure shows
+the source image, source RGB cropped by the GT Mask on a white background, and
+the segmented 3DGS render, in that order. In the Mask error row, true positives
+are green, false positives are red, and false negatives are blue.
+`eval_comparison.png` remains a compatibility copy of the Mask figure.
 `sam_frame_mapping.json` points to the latest round's mapping, while the
 round-specific manifests preserve each renumbered SAM frame's original
 training or spherical camera index. `segmentation_params.json` records the
-20% view-visibility threshold and the exact frame and mask indices removed in
-each round. The Round 2 mapping file is absent when Round 2 is skipped.
+configured view-visibility threshold (the CSV and Gradio default is 1%) and
+the exact frame and mask indices removed in each round. The Round 2 mapping
+file is absent when Round 2 is skipped.
 ABR fails closed when a legacy output has no mapping manifest; the Python API
 offers `allow_legacy_positional_alignment=True` only for outputs that have
 been independently audited and are known not to contain a filtered training

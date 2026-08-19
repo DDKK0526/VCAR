@@ -59,6 +59,26 @@ def _load_gt_mask(path: Path) -> np.ndarray:
     return (mask > 128).astype(np.uint8)
 
 
+def camera_rgb_image(camera: Any) -> np.ndarray:
+    """Return a dataset camera's source image as an RGB uint8 array."""
+    image = camera.original_image.detach().cpu().numpy()
+    if image.ndim != 3:
+        raise ValueError(
+            f"Expected a 3D camera image, got shape {image.shape}"
+        )
+    if image.shape[0] in (3, 4):
+        image = np.transpose(image[:3], (1, 2, 0))
+    elif image.shape[2] in (3, 4):
+        image = image[:, :, :3]
+    else:
+        raise ValueError(
+            f"Expected an RGB camera image, got shape {image.shape}"
+        )
+    if np.issubdtype(image.dtype, np.floating):
+        image = np.clip(image, 0.0, 1.0) * 255.0
+    return np.ascontiguousarray(image.astype(np.uint8))
+
+
 def evaluate_segmentation(
     segment_ply_path: str | Path,
     gt_mask_dir: str | Path,
@@ -117,7 +137,7 @@ def evaluate_segmentation(
                 continue
 
             gt_mask = _load_gt_mask(gt_path)
-            _, alpha, _ = render_gsplat_camera(
+            render_rgb, alpha, _ = render_gsplat_camera(
                 gaussians,
                 camera,
                 camera.image_width,
@@ -132,6 +152,16 @@ def evaluate_segmentation(
                     interpolation=cv2.INTER_NEAREST,
                 )
             pred_mask = (pred_alpha > alpha_threshold).astype(np.uint8)
+            target_size = (gt_mask.shape[1], gt_mask.shape[0])
+            if render_rgb.shape[:2] != gt_mask.shape:
+                render_rgb = cv2.resize(
+                    render_rgb, target_size, interpolation=cv2.INTER_AREA
+                )
+            source_rgb = camera_rgb_image(camera)
+            if source_rgb.shape[:2] != gt_mask.shape:
+                source_rgb = cv2.resize(
+                    source_rgb, target_size, interpolation=cv2.INTER_AREA
+                )
             per_frame_results.append(
                 {
                     "frame": frame_name,
@@ -141,6 +171,8 @@ def evaluate_segmentation(
                     ),
                     "pred_mask": pred_mask,
                     "gt_mask": gt_mask,
+                    "source_rgb": source_rgb,
+                    "render_rgb": render_rgb,
                 }
             )
     finally:
@@ -160,17 +192,37 @@ def evaluate_segmentation(
 
 
 def _mask_thumbnail(mask: np.ndarray, size: tuple[int, int]) -> np.ndarray:
-    gray = ((1 - mask) * 255).astype(np.uint8)
+    gray = ((mask > 0).astype(np.uint8) * 255)
     image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     return cv2.resize(image, size, interpolation=cv2.INTER_NEAREST)
 
 
-def save_comparison_grid(
+def _error_thumbnail(
+    pred_mask: np.ndarray,
+    gt_mask: np.ndarray,
+    size: tuple[int, int],
+) -> np.ndarray:
+    pred = pred_mask > 0
+    gt = gt_mask > 0
+    image = np.zeros((*pred.shape, 3), dtype=np.uint8)
+    image[np.logical_and(pred, gt)] = (0, 180, 0)
+    image[np.logical_and(pred, np.logical_not(gt))] = (0, 0, 255)
+    image[np.logical_and(np.logical_not(pred), gt)] = (255, 0, 0)
+    return cv2.resize(image, size, interpolation=cv2.INTER_NEAREST)
+
+
+def _rgb_thumbnail(image_rgb: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    return cv2.resize(image_bgr, size, interpolation=cv2.INTER_AREA)
+
+
+def _save_result_grid(
     per_frame_results: list[dict[str, Any]],
     save_path: str | Path,
-    thumbnail_size: tuple[int, int] = (256, 256),
+    row_labels: list[str],
+    panel_builder: Any,
+    thumbnail_size: tuple[int, int],
 ) -> None:
-    """Save prediction/GT comparisons ordered from lowest to highest IoU."""
     if not per_frame_results:
         return
 
@@ -178,7 +230,7 @@ def save_comparison_grid(
     thumb_width, thumb_height = thumbnail_size
     padding = 10
     label_height = 30
-    row_label_width = 40
+    row_label_width = 120
     gap = 6
     canvas_width = (
         padding * 2
@@ -186,17 +238,22 @@ def save_comparison_grid(
         + len(results) * thumb_width
         + max(0, len(results) - 1) * gap
     )
-    canvas_height = padding * 2 + label_height + thumb_height * 2 + gap
+    canvas_height = (
+        padding * 2
+        + label_height
+        + len(row_labels) * thumb_height
+        + max(0, len(row_labels) - 1) * gap
+    )
     canvas = np.full(
         (canvas_height, canvas_width, 3), 255, dtype=np.uint8
     )
 
     font = cv2.FONT_HERSHEY_SIMPLEX
-    for index, result in enumerate(results):
-        x = padding + row_label_width + index * (thumb_width + gap)
-        pred_y = padding + label_height
-        gt_y = pred_y + thumb_height + gap
-        label = f"f{result['frame']}  {result['iou']:.3f}"
+    for column, result in enumerate(results):
+        x = padding + row_label_width + column * (thumb_width + gap)
+        frame = str(result["frame"])
+        frame_label = f"f{frame}" if frame.isdigit() else frame
+        label = f"{frame_label}  IoU {result['iou']:.3f}"
         cv2.putText(
             canvas,
             label,
@@ -207,39 +264,98 @@ def save_comparison_grid(
             1,
             cv2.LINE_AA,
         )
-        canvas[pred_y:pred_y + thumb_height, x:x + thumb_width] = (
-            _mask_thumbnail(result["pred_mask"], thumbnail_size)
-        )
-        canvas[gt_y:gt_y + thumb_height, x:x + thumb_width] = (
-            _mask_thumbnail(result["gt_mask"], thumbnail_size)
-        )
+        panels = panel_builder(result, thumbnail_size)
+        if len(panels) != len(row_labels):
+            raise ValueError("Panel count does not match comparison row labels")
+        for row, panel in enumerate(panels):
+            y = padding + label_height + row * (thumb_height + gap)
+            canvas[y:y + thumb_height, x:x + thumb_width] = panel
 
-    cv2.putText(
-        canvas,
-        "Pred",
-        (padding, padding + label_height + thumb_height // 2),
-        font,
-        0.42,
-        (80, 80, 80),
-        1,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        canvas,
-        "GT",
-        (
-            padding,
-            padding + label_height + thumb_height + gap
-            + thumb_height // 2,
-        ),
-        font,
-        0.42,
-        (80, 80, 80),
-        1,
-        cv2.LINE_AA,
-    )
+    for row, label in enumerate(row_labels):
+        y = (
+            padding
+            + label_height
+            + row * (thumb_height + gap)
+            + thumb_height // 2
+        )
+        cv2.putText(
+            canvas,
+            label,
+            (padding, y),
+            font,
+            0.42,
+            (80, 80, 80),
+            1,
+            cv2.LINE_AA,
+        )
 
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     if not cv2.imwrite(str(save_path), canvas):
         raise OSError(f"Could not save evaluation comparison: {save_path}")
+
+
+def save_mask_comparison_grid(
+    per_frame_results: list[dict[str, Any]],
+    save_path: str | Path,
+    thumbnail_size: tuple[int, int] = (256, 256),
+) -> None:
+    """Save Prediction/GT/error masks ordered from lowest to highest IoU."""
+    def build_panels(result: dict[str, Any], size: tuple[int, int]):
+        return [
+            _mask_thumbnail(result["pred_mask"], size),
+            _mask_thumbnail(result["gt_mask"], size),
+            _error_thumbnail(result["pred_mask"], result["gt_mask"], size),
+        ]
+
+    _save_result_grid(
+        per_frame_results,
+        save_path,
+        ["Prediction", "GT", "TP/FP/FN"],
+        build_panels,
+        thumbnail_size,
+    )
+
+
+def save_rgb_comparison_grid(
+    per_frame_results: list[dict[str, Any]],
+    save_path: str | Path,
+    thumbnail_size: tuple[int, int] = (256, 256),
+) -> None:
+    """Save source/GT-masked/render RGB panels in mask-grid order."""
+    def build_panels(result: dict[str, Any], size: tuple[int, int]):
+        source_rgb = result["source_rgb"]
+        render_rgb = result["render_rgb"]
+        gt_mask = result["gt_mask"] > 0
+        if gt_mask.shape != source_rgb.shape[:2]:
+            gt_mask = cv2.resize(
+                gt_mask.astype(np.uint8),
+                (source_rgb.shape[1], source_rgb.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            ) > 0
+        white_background = np.full_like(source_rgb, 255)
+        gt_masked_source = np.where(
+            gt_mask[:, :, None], source_rgb, white_background
+        ).astype(np.uint8)
+        return [
+            _rgb_thumbnail(source_rgb, size),
+            _rgb_thumbnail(gt_masked_source, size),
+            _rgb_thumbnail(render_rgb, size),
+        ]
+
+    _save_result_grid(
+        per_frame_results,
+        save_path,
+        ["Source RGB", "GT-masked RGB", "3DGS render"],
+        build_panels,
+        thumbnail_size,
+    )
+
+
+def save_comparison_grid(
+    per_frame_results: list[dict[str, Any]],
+    save_path: str | Path,
+    thumbnail_size: tuple[int, int] = (256, 256),
+) -> None:
+    """Backward-compatible alias for the Mask comparison grid."""
+    save_mask_comparison_grid(per_frame_results, save_path, thumbnail_size)

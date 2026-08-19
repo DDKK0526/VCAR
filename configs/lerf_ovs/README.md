@@ -20,6 +20,7 @@ Blank algorithm fields use these defaults from `run_lerf_ovs.py`:
 |---|---:|
 | `threshold_r1` | 0.7 |
 | `threshold_r2` | 0.5 |
+| `min_visible_ratio` | 0.01 |
 | `angular_gap_threshold` | 90.0 |
 | `n_layers` | 4 |
 | `n_points_per_layer` | 8 |
@@ -33,9 +34,15 @@ Existing rows may override these values. Before every target, the runner resets
 Python, NumPy, and PyTorch random states using `random_seed` so that execution
 order does not change the configured random state.
 
+For the current parameter sweep, every CSV row explicitly sets
+`min_visible_ratio=0.01`, `angular_gap_threshold=90`,
+`min_compression=0.1`, and
+`tolerance_ratio=0.6`. The existing `threshold_r1` and `threshold_r2` values
+remain unchanged.
+
 The following provisional targets currently use one deterministic foreground
 point and a bounding box derived from their reviewed mask. Their algorithm
-fields are intentionally blank and therefore use the defaults above:
+fields now use the same uniform sweep values described above:
 
 - `teatime/hooves2`
 - `teatime/hooves3`

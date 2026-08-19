@@ -12,6 +12,7 @@ than the ambiguous single `threshold` field in the old JSON files.
 |---|---:|
 | Round 1 voting threshold `threshold_r1` | 0.5 |
 | Round 2 voting threshold `threshold_r2` | 0.8 |
+| Minimum visible ratio `min_visible_ratio` | 0.01 |
 | Angular-gap threshold | 90° |
 | Spherical spiral sampling | 4 layers × 8 points |
 | Minimum ABR compression | 0.1 |
@@ -34,6 +35,7 @@ spherical views.
 | `first_frame_idx` | Annotated training-view index in COLMAP render order |
 | `fg_points` / `bg_points` | Foreground and background points as JSON |
 | `box` | Optional JSON box `[x1, y1, x2, y2]` |
+| `min_visible_ratio` | Minimum projected foreground ratio for a valid coverage view |
 | `force_round2` | Fixed to `true` by the NVOS paper protocol |
 | `boundary_refine` | Whether to run ABR |
 | `api_url` | Local SAM3 service URL; may be overridden on the command line |
