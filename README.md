@@ -234,3 +234,7 @@ python eval_utils/run_nvos.py \
 ```
 
 Metrics are written to `outputs/nvos/nvos_summary.csv`.
+
+## License
+
+This project is released under the [MIT License](LICENSE).
