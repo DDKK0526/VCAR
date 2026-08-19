@@ -238,3 +238,25 @@ Metrics are written to `outputs/nvos/nvos_summary.csv`.
 ## License
 
 This project is released under the [MIT License](LICENSE).
+
+## Citation
+
+If you find VCAR useful in your research, please cite:
+
+```bibtex
+@inproceedings{cao2026vcar,
+  author = {Cao, Kun and Wang, Di and Zhu, Haibin and Huang, Haozhi and Wang, Xu and Shi, Zheng and Yang, Guanghua},
+  title = {{VCAR}: Training-Free {3DGS} Segmentation via View Completeness and Axis-Aware Boundary Refinement},
+  booktitle = {Proceedings of the 34th ACM International Conference on Multimedia},
+  series = {MM '26},
+  year = {2026},
+  month = nov,
+  publisher = {Association for Computing Machinery},
+  address = {New York, NY, USA},
+  location = {Rio de Janeiro, Brazil},
+  isbn = {979-8-4007-2213-4},
+  doi = {10.1145/3767308.3836080},
+  url = {https://doi.org/10.1145/3767308.3836080},
+  numpages = {10}
+}
+```
