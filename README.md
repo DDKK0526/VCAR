@@ -4,21 +4,11 @@ Official implementation of *VCAR: Training-Free 3DGS Segmentation via View
 Completeness and Axis-Aware Boundary Refinement*, accepted by ACM Multimedia
 2026 (ACM MM 2026).
 
-**Paper:** [arXiv:2608.30870](https://arxiv.org/abs/2608.30870)
-
 VCAR segments objects from an already trained 3D Gaussian Splatting (3DGS)
-scene without additional training.
-
-## Framework
+scene without additional training. For more details, please refer to our paper:
+[arXiv:2608.30870](https://arxiv.org/abs/2608.30870).
 
 [![Overview of the VCAR framework](assets/vcar_framework.png)](assets/vcar_framework.png)
-
-*Overview of the VCAR framework. Click the figure to view it at full resolution.*
-
-ABR axis attribution retains the complete first-order pinhole perspective
-coupling. It removes only the depth factor shared by all three local axes,
-while recovering normalized image coordinates from the projected Gaussian
-center and camera intrinsics.
 
 ## Repository layout
 
